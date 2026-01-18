@@ -1,5 +1,5 @@
 import { Pose } from '../types';
-import { ANATOMY, RIGGING } from '../constants';
+import { ANATOMY, RIGGING, HEAD_UNIT } from '../constants';
 
 export const IK_REMOVED = false;
 
@@ -33,122 +33,196 @@ export const interpolatePose = (poseA: Pose, poseB: Pose, t: number): Pose => {
 
 /**
  * Calculates the maximum deviation between two poses.
- * Returns the largest difference found in either degrees (for joints) or pixels (for root).
  */
 export const getMaxPoseDeviation = (poseA: Pose, poseB: Pose): number => {
     let maxDiff = 0;
-
-    // Check Root Position (Pythagorean distance)
     const dx = poseA.root.x - poseB.root.x;
     const dy = poseA.root.y - poseB.root.y;
-    const rootDist = Math.sqrt(dx * dx + dy * dy);
-    maxDiff = Math.max(maxDiff, rootDist);
+    maxDiff = Math.max(maxDiff, Math.sqrt(dx * dx + dy * dy));
+    maxDiff = Math.max(maxDiff, Math.abs((poseA.rootRotation || 0) - (poseB.rootRotation || 0)));
 
-    // Check Root Rotation
-    const rootRotDiff = Math.abs((poseA.rootRotation || 0) - (poseB.rootRotation || 0));
-    maxDiff = Math.max(maxDiff, rootRotDiff);
-
-    // Check all other numeric properties
     const keys = Object.keys(poseA) as Array<keyof Pose>;
     for (const key of keys) {
         if (key === 'root' || key === 'rootRotation') continue;
-        
         const valA = poseA[key];
         const valB = poseB[key];
-
         if (typeof valA === 'number' && typeof valB === 'number') {
-            const diff = Math.abs(valA - valB);
-            maxDiff = Math.max(maxDiff, diff);
+            maxDiff = Math.max(maxDiff, Math.abs(valA - valB));
         }
     }
-
     return maxDiff;
 };
 
-// --- INVERSE KINEMATICS ENGINE ---
+// --- FORWARD KINEMATICS ENGINE ---
 
-// Basic vector rotation
+const rad = (deg: number) => deg * Math.PI / 180;
 const rotateVec = (x: number, y: number, angleDeg: number) => {
-    const rad = angleDeg * Math.PI / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
+    const r = rad(angleDeg);
+    const c = Math.cos(r);
+    const s = Math.sin(r);
     return {
-        x: x * cos - y * sin,
-        y: x * sin + y * cos
+        x: x * c - y * s,
+        y: x * s + y * c
     };
 };
+const addVec = (v1: {x:number, y:number}, v2: {x:number, y:number}) => ({ x: v1.x + v2.x, y: v1.y + v2.y });
 
 /**
- * Calculates Global Joint Positions based on the Pose
- * Useful for finding where the feet ARE so we can lock them there.
+ * Calculates Global Joint Positions for the entire body.
+ * Used for IK locking and collision detection.
  */
 export const getJointPositions = (pose: Pose) => {
-    // 1. Root
-    const root = pose.root;
-    const rootRot = pose.rootRotation || 0;
+    const { root, rootRotation = 0 } = pose;
 
-    // 2. Hip Centers (Left/Right)
-    // Hierarchy: Root -> Rotate(RootRot) -> PelvisBone -> Rotate(Hips) -> HipOffset
+    // --- LOWER BODY ---
+    // Root -> Rotate(RootRot) -> Rotate(Hips) -> PelvisBone -> [HipOffsets] -> Legs
+    // Note: The Mannequin structure has Hips rotating AT the root.
+    // The Pelvis bone extends from Root to Hips.
+    // Legs attach at the end of the Pelvis bone.
     
-    // Hip Pivot local to Pelvis Bone End
-    // Pelvis Bone Vector: (0, ANATOMY.PELVIS)
-    // Hip Offset local to Bone End: (Offset, 0)
-    // Total Vector relative to Root (before root rot): Rotate((0, PELVIS) + (Offset, 0), Hips)
-    // Actually, Bone structure is: Rotate(Hips) -> Translate(0, Length) -> Children.
-    // Children are at (0, Length) in the Rotated(Hips) frame.
-    // The Leg Container is translated by (HipOffset, 0) in that frame.
-    // So Vector = Rotate( (0, PELVIS) + (HipOffset, 0), Hips )
+    const globalAnglePelvis = rootRotation + pose.hips;
     
-    const calculateHip = (side: 'left' | 'right') => {
-        const xOffset = side === 'right' ? ANATOMY.HIP_WIDTH/4 : -ANATOMY.HIP_WIDTH/4;
-        const totalRot = rootRot + pose.hips;
+    // Vector from Root to End-of-Pelvis (where hips attach)
+    // Pelvis bone is length ANATOMY.PELVIS along Y axis in its local space.
+    const pelvisVec = rotateVec(0, ANATOMY.PELVIS, globalAnglePelvis);
+    const pelvisEnd = addVec(root, pelvisVec);
+
+    const getLegJoints = (side: 'left' | 'right') => {
+        const isRight = side === 'right';
+        const thighAngle = isRight ? pose.rThigh : pose.lThigh;
+        const calfAngle = isRight ? pose.rCalf : pose.lCalf;
+        const ankleAngle = isRight ? pose.rAnkle : pose.lAnkle;
+        const toesAngle = isRight ? pose.rToes : pose.lToes;
         
-        // Vector from Navel to Hip Joint
-        // The Pelvis bone goes down (Y+). The hip offset is X.
-        const v = rotateVec(xOffset, ANATOMY.PELVIS, totalRot);
+        // Hip Joint Offset relative to Pelvis End
+        // Right is Negative X in Mannequin setup? No:
+        // rHipX = ANATOMY.HIP_WIDTH/4. lHipX = -ANATOMY.HIP_WIDTH/4.
+        // Wait, checking Mannequin.tsx:
+        // rHipX = ANATOMY.HIP_WIDTH/4; (Positive)
+        // lHipX = -ANATOMY.HIP_WIDTH/4; (Negative)
+        // Transform is translate(rHipX, hipY).
+        // Since we are inside the Pelvis Bone (rotated by globalAnglePelvis),
+        // we rotate the offset vector by globalAnglePelvis.
+        const hipOffsetX = isRight ? ANATOMY.HIP_WIDTH/4 : -ANATOMY.HIP_WIDTH/4;
+        const hipOffsetVec = rotateVec(hipOffsetX, 0, globalAnglePelvis);
+        const hipJoint = addVec(pelvisEnd, hipOffsetVec);
         
-        return {
-            x: root.x + v.x,
-            y: root.y + v.y
-        };
+        // Thigh
+        const angleThighGlobal = globalAnglePelvis + thighAngle;
+        const thighVec = rotateVec(0, ANATOMY.LEG_UPPER, angleThighGlobal);
+        const kneeJoint = addVec(hipJoint, thighVec);
+        
+        // Calf
+        const angleCalfGlobal = angleThighGlobal + calfAngle;
+        const calfVec = rotateVec(0, ANATOMY.LEG_LOWER, angleCalfGlobal);
+        const ankleJoint = addVec(kneeJoint, calfVec);
+        
+        // Foot
+        // Mannequin uses -90 offset for Right, +90 for Left.
+        // rotation={-90 + pose.rAnkle}
+        const footBaseAngle = isRight ? -90 : 90;
+        const angleFootGlobal = angleCalfGlobal + footBaseAngle + ankleAngle;
+        const footVec = rotateVec(0, ANATOMY.FOOT, angleFootGlobal);
+        const toeBase = addVec(ankleJoint, footVec);
+        
+        // Toes
+        const angleToesGlobal = angleFootGlobal + toesAngle;
+        const toesVec = rotateVec(0, ANATOMY.TOES, angleToesGlobal);
+        const toeTip = addVec(toeBase, toesVec);
+
+        return { hip: hipJoint, knee: kneeJoint, ankle: ankleJoint, toeBase, toeTip };
     };
 
-    const lHip = calculateHip('left');
-    const rHip = calculateHip('right');
+    const rightLeg = getLegJoints('right');
+    const leftLeg = getLegJoints('left');
 
-    // 3. Ankles
-    // Thigh + Calf
-    const calculateAnkle = (hip: {x: number, y: number}, side: 'left' | 'right') => {
-        const thighAngleLocal = side === 'right' ? pose.rThigh : pose.lThigh;
-        const calfAngleLocal = side === 'right' ? pose.rCalf : pose.lCalf;
+    // --- UPPER BODY ---
+    // Root -> Rotate(RootRot) -> Rotate(Torso) -> TorsoBone -> Neck -> Head
+    const globalAngleTorso = rootRotation + pose.torso;
+    
+    // Neck Base (End of Torso Bone)
+    // Torso Bone is Wedge, length ANATOMY.TORSO along Y.
+    // Note: In Mannequin, `navelY_Torso = -ANATOMY.TORSO`.
+    // Wait, Mannequin: <Bone rotation={pose.torso} ... >
+    // The bone starts at Root. Children at Length.
+    // So NeckBase is at (0, TORSO) in Torso space.
+    const torsoVec = rotateVec(0, ANATOMY.TORSO, globalAngleTorso);
+    const neckBase = addVec(root, torsoVec);
+    
+    // Head
+    const globalAngleNeck = globalAngleTorso + pose.neck;
+    // Head Top is NeckLength + HeadLength away
+    const headVec = rotateVec(0, ANATOMY.NECK + ANATOMY.HEAD, globalAngleNeck);
+    const headTop = addVec(neckBase, headVec);
+
+    // Shoulders
+    // Attached to Torso Bone.
+    // Offsets defined in RIGGING/Mannequin.
+    // rShoulderX = -(ANATOMY.SHOULDER_WIDTH/2 - inset + extension)
+    // lShoulderX = +(ANATOMY.SHOULDER_WIDTH/2 - inset + extension)
+    // shoulderY = RIGGING.SHOULDER_LIFT (Negative Y in local space? No, usually positive down)
+    // Mannequin says shoulderY = RIGGING.SHOULDER_LIFT (-12).
+    
+    const getArmJoints = (side: 'left' | 'right') => {
+        const isRight = side === 'right';
+        const shoulderAngle = isRight ? pose.rShoulder : pose.lShoulder;
+        const forearmAngle = isRight ? pose.rForearm : pose.lForearm;
+        const wristAngle = isRight ? pose.rWrist : pose.lWrist;
+
+        // Shoulder Joint Position
+        // rShoulderX is Negative. lShoulderX is Positive.
+        const halfWidth = ANATOMY.SHOULDER_WIDTH/2 - RIGGING.SHOULDER_INSET + RIGGING.CLAVICLE_EXTENSION;
+        const sx = isRight ? -halfWidth : halfWidth;
+        const sy = RIGGING.SHOULDER_LIFT;
         
-        // Global Angles
-        const thighAngleGlobal = rootRot + pose.hips + thighAngleLocal;
-        const calfAngleGlobal = thighAngleGlobal + calfAngleLocal;
+        const shoulderOffsetVec = rotateVec(sx, sy, globalAngleTorso);
+        const shoulderJoint = addVec(root, shoulderOffsetVec); // Torso starts at Root
+
+        // Upper Arm
+        // Right: rotation = 90 + rShoulder
+        // Left: rotation = -(90 + lShoulder)
+        const baseArmAngle = isRight ? 90 : -90;
+        // For Left, the Mannequin uses -(90 + lShoulder) = -90 - lShoulder.
+        const effectiveShoulderAngle = isRight 
+            ? baseArmAngle + shoulderAngle 
+            : baseArmAngle - shoulderAngle;
+            
+        const globalAngleArm = globalAngleTorso + effectiveShoulderAngle;
+        const armVec = rotateVec(0, ANATOMY.UPPER_ARM, globalAngleArm);
+        const elbowJoint = addVec(shoulderJoint, armVec);
         
-        const thighVec = rotateVec(0, ANATOMY.LEG_UPPER, thighAngleGlobal);
-        const calfVec = rotateVec(0, ANATOMY.LEG_LOWER, calfAngleGlobal);
+        // Forearm
+        const globalAngleForearm = globalAngleArm + forearmAngle;
+        const forearmVec = rotateVec(0, ANATOMY.LOWER_ARM, globalAngleForearm);
+        const wristJoint = addVec(elbowJoint, forearmVec);
         
-        const knee = { x: hip.x + thighVec.x, y: hip.y + thighVec.y };
-        const ankle = { x: knee.x + calfVec.x, y: knee.y + calfVec.y };
+        // Hand
+        const globalAngleHand = globalAngleForearm + wristAngle;
+        const handVec = rotateVec(0, ANATOMY.HAND, globalAngleHand);
+        const handTip = addVec(wristJoint, handVec);
         
-        return { knee, ankle, calfAngleGlobal };
+        return { shoulder: shoulderJoint, elbow: elbowJoint, wrist: wristJoint, handTip };
     };
 
-    const lLeg = calculateAnkle(lHip, 'left');
-    const rLeg = calculateAnkle(rHip, 'right');
+    const rightArm = getArmJoints('right');
+    const leftArm = getArmJoints('left');
 
     return {
-        lHip, rHip,
-        lKnee: lLeg.knee, rKnee: rLeg.knee,
-        lAnkle: lLeg.ankle, rAnkle: rLeg.ankle
+        lHip: leftLeg.hip, rHip: rightLeg.hip,
+        lKnee: leftLeg.knee, rKnee: rightLeg.knee,
+        lAnkle: leftLeg.ankle, rAnkle: rightLeg.ankle,
+        lToeTip: leftLeg.toeTip, rToeTip: rightLeg.toeTip,
+        
+        neckBase,
+        headTop,
+        
+        lShoulder: leftArm.shoulder, rShoulder: rightArm.shoulder,
+        lElbow: leftArm.elbow, rElbow: rightArm.elbow,
+        lWrist: leftArm.wrist, rWrist: rightArm.wrist,
+        lHandTip: leftArm.handTip, rHandTip: rightArm.handTip
     };
 };
 
-/**
- * Solve 2-Bone IK
- * Returns LOCAL angles for Thigh and Calf
- */
 export const solveTwoBoneIK = (
     rootRot: number,
     hipsRot: number,
@@ -156,46 +230,24 @@ export const solveTwoBoneIK = (
     targetAnkle: {x: number, y: number},
     L1: number,
     L2: number,
-    currentBendDir: number // 1 or -1, to prefer current knee direction
+    currentBendDir: number 
 ) => {
     const dx = targetAnkle.x - hipPos.x;
     const dy = targetAnkle.y - hipPos.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
-    
-    // Clamp reach to avoid NaN
     const reach = Math.min(dist, L1 + L2 - 0.1);
     
-    // Law of Cosines for Alpha (Angle between Thigh and Reach Vector)
     const cosAlpha = (L1*L1 + reach*reach - L2*L2) / (2 * L1 * reach);
     const alpha = Math.acos(Math.max(-1, Math.min(1, cosAlpha)));
-    
-    // Angle of Reach Vector (Global)
-    // atan2(dy, dx) gives angle from X+. 
-    // SVG 0 is Y+. (0,1).
-    // VectorAngle in SVG space = atan2(dy, dx) - PI/2.
     const vectorAngle = Math.atan2(dy, dx) - (Math.PI / 2);
-    
-    // Thigh Angle Global
-    // We modify vectorAngle by alpha. Direction depends on bend.
     const thighGlobalRad = vectorAngle - (alpha * currentBendDir);
     
-    // Calf Angle Local (Angle relative to Thigh)
-    // Law of Cosines for Angle C (Internal Knee Angle)
     const cosC = (L1*L1 + L2*L2 - reach*reach) / (2 * L1 * L2);
     const angleC = Math.acos(Math.max(-1, Math.min(1, cosC)));
-    
-    // If straight leg, Angle C is PI. Local Calf is 0.
-    // Deviation is (PI - C). 
-    // If bendDir is positive, we want positive rotation?
     const calfLocalRad = (Math.PI - angleC) * currentBendDir;
     
-    // Convert to Degrees
     let thighGlobalDeg = thighGlobalRad * 180 / Math.PI;
     const calfLocalDeg = calfLocalRad * 180 / Math.PI;
-    
-    // Convert Global Thigh to Local Thigh
-    // Global = Root + Hips + Local
-    // Local = Global - Root - Hips
     const thighLocalDeg = thighGlobalDeg - rootRot - hipsRot;
     
     return {

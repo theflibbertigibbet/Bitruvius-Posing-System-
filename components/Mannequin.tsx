@@ -6,10 +6,11 @@ import { ANATOMY, HEAD_UNIT, RIGGING } from '../constants';
 interface MannequinProps {
   pose: Pose;
   showOverlay?: boolean;
+  visibility?: Record<string, boolean>; // Keyed by bone name (e.g. 'torso', 'lThigh')
 }
 
-export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }) => {
-  // Use shared Rigging constants to ensure IK solver matches visual output
+export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true, visibility = {} }) => {
+  // Use shared Rigging constants to ensure IK Solver matches visual output
   const shoulderInset = RIGGING.SHOULDER_INSET; 
   const shoulderLift = RIGGING.SHOULDER_LIFT;
   const clavicleExtension = RIGGING.CLAVICLE_EXTENSION;
@@ -32,6 +33,9 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
   const lHipX = -ANATOMY.HIP_WIDTH/4;
   const hipY = 0;
 
+  // Helper to check visibility (default to true if undefined)
+  const isVisible = (key: string) => visibility[key] !== false;
+
   return (
     <g 
       className="mannequin-root text-ink"
@@ -50,13 +54,14 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
         rounded={true}
         cutout={12} 
         showOverlay={showOverlay}
+        visible={isVisible('torso')}
         decorations={[
           { position: 0.65, shape: 'square', type: 'filled', size: 8 },
           { position: 0.85, shape: 'circle', type: 'filled', size: 10 }
         ]}
       >
         
-        {showOverlay && (
+        {showOverlay && isVisible('torso') && (
             <>
                 {/* 1. Navel to Shoulder (Pectoral/Abdominal Line) */}
                 <line x1={0} y1={navelY_Torso} x2={rShoulderX} y2={shoulderY} stroke="#a855f7" strokeWidth={2} opacity={0.9} strokeLinecap="round" />
@@ -76,18 +81,21 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
               width={ANATOMY.NECK_BASE} 
               variant="column"
               showOverlay={showOverlay}
+              visible={isVisible('neck')}
               decorations={[]}
           >
-               <g transform={`translate(0, ${0})`}> 
-                  <circle cx="0" cy={ANATOMY.HEAD/2} r={ANATOMY.HEAD / 2} fill="currentColor" />
-                  
-                  {showOverlay && (
-                    <>
-                        <line x1={0} y1={-ANATOMY.NECK} x2={0} y2={ANATOMY.HEAD/2} stroke="#a855f7" strokeWidth={2} opacity={0.9} strokeLinecap="round" />
-                        <circle cx="0" cy={ANATOMY.HEAD/2} r={3} fill="#a855f7" />
-                    </>
-                  )}
-               </g>
+               {isVisible('neck') && (
+                   <g transform={`translate(0, ${0})`}> 
+                      <circle cx="0" cy={ANATOMY.HEAD/2} r={ANATOMY.HEAD / 2} fill="currentColor" />
+                      
+                      {showOverlay && (
+                        <>
+                            <line x1={0} y1={-ANATOMY.NECK} x2={0} y2={ANATOMY.HEAD/2} stroke="#a855f7" strokeWidth={2} opacity={0.9} strokeLinecap="round" />
+                            <circle cx="0" cy={ANATOMY.HEAD/2} r={3} fill="#a855f7" />
+                        </>
+                      )}
+                   </g>
+               )}
           </Bone>
         </g>
 
@@ -101,6 +109,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
             width={ANATOMY.LIMB_WIDTH_ARM} 
             variant="taper" 
             showOverlay={showOverlay}
+            visible={isVisible('rShoulder')}
             decorations={[
               { position: 0, shape: 'circle', type: 'filled', size: shoulderSize },
             ]}
@@ -111,6 +120,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                 width={ANATOMY.LIMB_WIDTH_FOREARM}
                 variant="diamond"
                 showOverlay={showOverlay}
+                visible={isVisible('rForearm')}
             >
               <Bone 
                 rotation={pose.rWrist} 
@@ -118,6 +128,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                 width={ANATOMY.EFFECTOR_WIDTH} 
                 variant="arrowhead" 
                 showOverlay={showOverlay}
+                visible={isVisible('rWrist')}
                />
             </Bone>
           </Bone>
@@ -132,6 +143,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
             width={ANATOMY.LIMB_WIDTH_ARM}
             variant="taper"
             showOverlay={showOverlay}
+            visible={isVisible('lShoulder')}
             decorations={[
               { position: 0, shape: 'circle', type: 'filled', size: shoulderSize },
             ]}
@@ -142,6 +154,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                 width={ANATOMY.LIMB_WIDTH_FOREARM}
                 variant="diamond"
                 showOverlay={showOverlay}
+                visible={isVisible('lForearm')}
             >
                 <Bone 
                     rotation={pose.lWrist} 
@@ -149,6 +162,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                     width={ANATOMY.EFFECTOR_WIDTH} 
                     variant="arrowhead" 
                     showOverlay={showOverlay}
+                    visible={isVisible('lWrist')}
                 />
              </Bone>
           </Bone>
@@ -164,10 +178,11 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
         variant="pelvis"
         rounded={true}
         showOverlay={showOverlay}
+        visible={isVisible('hips')}
         decorations={[]}
       >
         
-        {showOverlay && (
+        {showOverlay && isVisible('hips') && (
             <>
                 <line x1={0} y1={navelY_Pelvis} x2={rHipX} y2={hipY} stroke="#a855f7" strokeWidth={2} opacity={0.9} strokeLinecap="round" />
                 <line x1={0} y1={navelY_Pelvis} x2={lHipX} y2={hipY} stroke="#a855f7" strokeWidth={2} opacity={0.9} strokeLinecap="round" />
@@ -184,6 +199,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
             width={ANATOMY.LIMB_WIDTH_THIGH}
             variant="diamond"
             showOverlay={showOverlay}
+            visible={isVisible('rThigh')}
           >
                <Bone 
                 rotation={pose.rCalf} 
@@ -191,6 +207,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                 width={ANATOMY.LIMB_WIDTH_CALF}
                 variant="diamond"
                 showOverlay={showOverlay}
+                visible={isVisible('rCalf')}
                >
                     <Bone 
                         rotation={-90 + pose.rAnkle} 
@@ -198,6 +215,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                         width={ANATOMY.EFFECTOR_WIDTH * 1.2} 
                         variant="diamond" 
                         showOverlay={showOverlay}
+                        visible={isVisible('rAnkle')}
                     >
                          <Bone
                             rotation={pose.rToes}
@@ -205,6 +223,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                             width={ANATOMY.EFFECTOR_WIDTH}
                             variant="arrowhead"
                             showOverlay={showOverlay}
+                            visible={isVisible('rToes')}
                          />
                     </Bone>
                </Bone>
@@ -220,6 +239,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
             width={ANATOMY.LIMB_WIDTH_THIGH}
             variant="diamond"
             showOverlay={showOverlay}
+            visible={isVisible('lThigh')}
           >
                <Bone 
                 rotation={pose.lCalf} 
@@ -227,6 +247,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                 width={ANATOMY.LIMB_WIDTH_CALF}
                 variant="diamond"
                 showOverlay={showOverlay}
+                visible={isVisible('lCalf')}
                >
                     <Bone 
                         rotation={90 + pose.lAnkle} 
@@ -234,6 +255,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                         width={ANATOMY.EFFECTOR_WIDTH * 1.2} 
                         variant="diamond" 
                         showOverlay={showOverlay}
+                        visible={isVisible('lAnkle')}
                     >
                         <Bone
                             rotation={pose.lToes}
@@ -241,6 +263,7 @@ export const Mannequin: React.FC<MannequinProps> = ({ pose, showOverlay = true }
                             width={ANATOMY.EFFECTOR_WIDTH}
                             variant="arrowhead"
                             showOverlay={showOverlay}
+                            visible={isVisible('lToes')}
                          />
                     </Bone>
                </Bone>

@@ -80,6 +80,7 @@ export const Bone: React.FC<BoneProps> = ({
   cutout = 0,
   decorations,
   showOverlay = true,
+  visible = true,
   children 
 }) => {
   
@@ -101,50 +102,54 @@ export const Bone: React.FC<BoneProps> = ({
 
   return (
     <g transform={transform}>
-      {/* Visual Representation */}
-      <path 
-        d={getBonePath(length, width, variant as BoneVariant, cutout)} 
-        fill="currentColor" 
-        // Rounded Logic: Use stroke to soften corners if requested
-        stroke={rounded ? "currentColor" : "none"}
-        strokeWidth={rounded ? width * 0.15 : 0}
-        strokeLinejoin={rounded ? "round" : "miter"}
-        strokeLinecap={rounded ? "round" : "butt"}
-      />
-      
-      {/* Gesture Line (Axis) - Hidden if overlay disabled */}
-      {showOverlay && (
-        <line 
-            x1={0} y1={0} 
-            x2={0} y2={length} 
-            stroke="#a855f7" 
-            strokeWidth={2} 
-            opacity={0.9}
-            strokeLinecap="round"
-        />
+      {/* Visual Representation (Conditional) */}
+      {visible && (
+          <>
+            <path 
+                d={getBonePath(length, width, variant as BoneVariant, cutout)} 
+                fill="currentColor" 
+                // Rounded Logic: Use stroke to soften corners if requested
+                stroke={rounded ? "currentColor" : "none"}
+                strokeWidth={rounded ? width * 0.15 : 0}
+                strokeLinejoin={rounded ? "round" : "miter"}
+                strokeLinecap={rounded ? "round" : "butt"}
+            />
+            
+            {/* Gesture Line (Axis) - Hidden if overlay disabled */}
+            {showOverlay && (
+                <line 
+                    x1={0} y1={0} 
+                    x2={0} y2={length} 
+                    stroke="#a855f7" 
+                    strokeWidth={2} 
+                    opacity={0.9}
+                    strokeLinecap="round"
+                />
+            )}
+            
+            {/* Decorations Layer (Holes, Buttons, etc.) */}
+            {decorations && decorations.map((d, i) => {
+                const y = length * d.position;
+                const size = d.size || 7;
+                const r = size / 2;
+                const fill = d.type === 'hole' ? '#fdf6e3' : 'currentColor';
+                
+                return (
+                <g key={`deco-${i}`} transform={`translate(0, ${y})`}>
+                    {d.shape === 'circle' && (
+                    <circle cx={0} cy={0} r={r} fill={fill} />
+                    )}
+                    {d.shape === 'square' && (
+                    <rect x={-r} y={-r} width={size} height={size} fill={fill} />
+                    )}
+                    {d.shape === 'triangle' && (
+                    <polygon points={`0,${-r} ${-r},${r} ${r},${r}`} fill={fill} />
+                    )}
+                </g>
+                );
+            })}
+          </>
       )}
-      
-      {/* Decorations Layer (Holes, Buttons, etc.) */}
-      {decorations && decorations.map((d, i) => {
-        const y = length * d.position;
-        const size = d.size || 7;
-        const r = size / 2;
-        const fill = d.type === 'hole' ? '#fdf6e3' : 'currentColor';
-        
-        return (
-          <g key={`deco-${i}`} transform={`translate(0, ${y})`}>
-            {d.shape === 'circle' && (
-              <circle cx={0} cy={0} r={r} fill={fill} />
-            )}
-            {d.shape === 'square' && (
-              <rect x={-r} y={-r} width={size} height={size} fill={fill} />
-            )}
-            {d.shape === 'triangle' && (
-              <polygon points={`0,${-r} ${-r},${r} ${r},${r}`} fill={fill} />
-            )}
-          </g>
-        );
-      })}
 
       {/* Recursive Children Container */}
       {/* 
@@ -160,7 +165,8 @@ export const Bone: React.FC<BoneProps> = ({
 
       {/* Articulation Joint (The Green Ball Pivot) */}
       {/* Renders at (0,0) of the LOCAL space (which is shifted by translate) */}
-      {showOverlay && (
+      {/* Only show if visible to avoid floating dots if parent is hidden */}
+      {showOverlay && visible && (
         <circle cx="0" cy="0" r="5" fill="#15803d" />
       )}
     </g>

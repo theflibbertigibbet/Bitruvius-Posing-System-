@@ -54,5 +54,6 @@ export interface BoneProps {
   cutout?: number; // Depth of cutout at the end of the bone (for V-necks, etc.)
   decorations?: Decoration[];
   showOverlay?: boolean; // If true, renders the rigging (lines/joints). If false, silhouette only.
+  visible?: boolean; // New: Controls visual rendering without breaking hierarchy
   children?: React.ReactNode;
 }

@@ -37,6 +37,10 @@ const App = () => {
   const [isActivity, setIsActivity] = useState(false);
   const activityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // VISIBILITY STATE (Granular Toggles)
+  // Default {} implies all visible. false means hidden.
+  const [visibility, setVisibility] = useState<Record<string, boolean>>({});
+
   // Interpolation
   const [interpolatedPose, setInterpolatedPose] = useState<Pose | null>(null);
   const displayPose = (isPlaying && isTweening && interpolatedPose) ? interpolatedPose : frames[currentFrameIndex];
@@ -191,10 +195,7 @@ const App = () => {
             const deviation = getMaxPoseDeviation(updatedFrame, previousFrame);
             
             if (deviation > RECORDING_THRESHOLD) {
-                // IMPORTANT: When auto-generating a frame in live mode, we should snapshot history
-                // so the user can "Undo" the live recording step.
                 recordHistory(); 
-
                 setFrames(prev => {
                    const newFrames = [...prev];
                    newFrames[currentFrameIndex] = updatedFrame;
@@ -336,6 +337,44 @@ const App = () => {
 
   const floorY = ANATOMY.PELVIS + ANATOMY.LEG_UPPER + ANATOMY.LEG_LOWER;
 
+  // VISIBILITY LOGIC
+  const toggleVisibility = (key: string) => {
+      setVisibility(prev => {
+          // If explicitly false, set to true. Otherwise (undefined or true) set to false.
+          const current = prev[key] !== false; 
+          return { ...prev, [key]: !current };
+      });
+  };
+
+  const isolateVisibility = (key: string) => {
+      // Logic:
+      // If we are "isolated" on this key (meaning ONLY this key is visible?), restore all?
+      // Simplified: 
+      // 1. If everything else is hidden, SHOW ALL.
+      // 2. Otherwise, HIDE ALL EXCEPT this key.
+      
+      // Since we don't have a list of ALL keys easily accessible here without defining them in constants,
+      // we can check the visibility map state. 
+      // Actually, a safer "Show All" is just clearing the map ({} = all visible).
+      
+      const allKeys = Object.keys(DEFAULT_POSE).filter(k => k !== 'root'); // root object handled separately usually
+      
+      // Heuristic: If map has many 'false' values, we are likely isolated.
+      const hiddenCount = Object.values(visibility).filter(v => v === false).length;
+      
+      if (hiddenCount > 2) {
+          // Restore All
+          setVisibility({});
+      } else {
+          // Isolate
+          const newVis: Record<string, boolean> = {};
+          allKeys.forEach(k => {
+              newVis[k] = (k === key); // True for target, false for others
+          });
+          setVisibility(newVis);
+      }
+  };
+
   return (
     <div className="w-full h-screen bg-paper relative overflow-hidden flex items-center justify-center touch-none">
       
@@ -349,7 +388,7 @@ const App = () => {
             viewBox="-300 -400 600 800" 
             className="overflow-visible"
         >
-          <Mannequin pose={displayPose} showOverlay={showOverlay} />
+          <Mannequin pose={displayPose} showOverlay={showOverlay} visibility={visibility} />
         </svg>
       </div>
 
@@ -392,7 +431,10 @@ const App = () => {
         onChange={handlePoseChange} 
         onLoad={handleLoadPose}
         frames={frames}
-        onInteractionStart={recordHistory} // Capture history before drag begins
+        onInteractionStart={recordHistory} 
+        visibility={visibility}
+        onToggleVisibility={toggleVisibility}
+        onIsolateVisibility={isolateVisibility}
       />
 
     </div>
