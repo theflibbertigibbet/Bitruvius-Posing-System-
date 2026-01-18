@@ -25,6 +25,7 @@ export const PoseLibrary: Cartridge = {
   "VITRUVIAN_T": DEFAULT_POSE,
   "MUSEUM_A": {
     ...DEFAULT_POSE,
+    hips: 0,
     lShoulder: -75,
     lBicepCorrective: 0,
     rShoulder: 75,
@@ -38,6 +39,7 @@ export const PoseLibrary: Cartridge = {
   },
   "DESIGN_WALK": {
     ...DEFAULT_POSE,
+    hips: 0,
     lThigh: 20,
     lCalf: 10,
     lAnkle: -15,
@@ -52,7 +54,8 @@ export const PoseLibrary: Cartridge = {
   "CONTRA_POSTO": {
     ...DEFAULT_POSE,
     root: { x: 0, y: 10 },
-    lThigh: 0,
+    hips: -5, // Slight hip tilt
+    lThigh: 5,
     lCalf: 0,
     rThigh: 15,
     rCalf: 30, // Bent knee

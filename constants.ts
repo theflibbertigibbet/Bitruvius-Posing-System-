@@ -36,11 +36,21 @@ export const ANATOMY = {
   EFFECTOR_WIDTH: 0.3 * HEAD_UNIT, // Sharp extremities
 };
 
+// RIGGING CONSTANTS (Internal Offsets)
+// Exported to ensure IK Solver matches Visual Mannequin exactly
+export const RIGGING = {
+    SHOULDER_INSET: 5,
+    SHOULDER_LIFT: -12,
+    CLAVICLE_EXTENSION: 0.5 * HEAD_UNIT,
+    NECK_SINK: -15,
+};
+
 // SYSTEM BIOS: Factory Default State (T-Pose Baseline)
 // This serves as the universal "Ground Truth" for all kinematic operations.
 export const DEFAULT_POSE: Pose = {
   root: { x: 0, y: 0 }, // Navel at World Origin (CPU Anchor)
   rootRotation: 0, // Global rotation around the anchor
+  hips: 0, // Waist/Pelvis rotation
   torso: 180, // Vertical Up (Upright)
   neck: 0,
   lShoulder: 0, // T-pose (Parallel to ground)

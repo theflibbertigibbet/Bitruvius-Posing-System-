@@ -10,10 +10,18 @@ interface TimelineProps {
   onDeleteFrame: () => void;
   isPlaying: boolean;
   onTogglePlay: () => void;
+  isRecording: boolean;
+  onToggleRecord: () => void;
   isTweening: boolean;
   onToggleTween: () => void;
   onExport: () => void;
   exportStatus: 'idle' | 'rendering' | 'zipping';
+  fps: number;
+  onChangeFps: (fps: number) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -25,10 +33,18 @@ export const Timeline: React.FC<TimelineProps> = ({
   onDeleteFrame,
   isPlaying,
   onTogglePlay,
+  isRecording,
+  onToggleRecord,
   isTweening,
   onToggleTween,
   onExport,
-  exportStatus
+  exportStatus,
+  fps,
+  onChangeFps,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
 }) => {
   
   return (
@@ -38,15 +54,50 @@ export const Timeline: React.FC<TimelineProps> = ({
       <div className="p-3 border-b border-gray-100">
         <h3 className="text-[10px] font-bold font-mono text-ink/80 tracking-wider mb-2">TIMELINE</h3>
         
+        {/* Undo/Redo Controls */}
+        <div className="grid grid-cols-2 gap-1 mb-2">
+            <button 
+                onClick={onUndo}
+                disabled={!canUndo || isPlaying}
+                className="py-1.5 bg-white border border-gray-200 rounded-sm text-[8px] font-bold font-mono text-ink hover:bg-gray-50 disabled:opacity-40 disabled:bg-gray-100 transition-all"
+                title="Undo (Ctrl+Z)"
+            >
+                ↶ UNDO
+            </button>
+            <button 
+                onClick={onRedo}
+                disabled={!canRedo || isPlaying}
+                className="py-1.5 bg-white border border-gray-200 rounded-sm text-[8px] font-bold font-mono text-ink hover:bg-gray-50 disabled:opacity-40 disabled:bg-gray-100 transition-all"
+                title="Redo (Ctrl+Shift+Z)"
+            >
+                redo ↷
+            </button>
+        </div>
+
         {/* Playback Controls */}
         <div className="flex flex-col gap-1.5">
            <button 
               onClick={onTogglePlay}
-              className={`w-full py-2 rounded-sm text-[9px] font-bold font-mono border transition-all ${isPlaying ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`}
+              disabled={isRecording}
+              className={`w-full py-2 rounded-sm text-[9px] font-bold font-mono border transition-all ${isPlaying ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-700 border-green-200'} disabled:opacity-50`}
             >
               {isPlaying ? 'PAUSE' : 'PLAY LOOP'}
             </button>
             
+            <button
+               onClick={onToggleRecord}
+               disabled={isPlaying}
+               className={`w-full py-2 rounded-sm text-[9px] font-bold font-mono border transition-all flex items-center justify-center gap-2 ${
+                   isRecording 
+                   ? 'bg-red-600 text-white border-red-700 animate-pulse' 
+                   : 'bg-white text-ink border-gray-300 hover:border-red-400 hover:text-red-600'
+               } disabled:opacity-50`}
+               title="Live Mode: Record keyframes automatically when moving > 22.5°"
+            >
+               {isRecording && <span className="w-2 h-2 bg-white rounded-full"></span>}
+               {isRecording ? 'REC [ON]' : 'LIVE REC'}
+            </button>
+
             <button
                onClick={onToggleTween}
                className={`w-full py-1.5 rounded-sm text-[9px] font-bold font-mono border transition-all ${isTweening ? 'bg-purple-600 text-white border-purple-700' : 'bg-gray-50 text-gray-400 border-gray-200 hover:text-purple-600'}`}
@@ -54,6 +105,22 @@ export const Timeline: React.FC<TimelineProps> = ({
             >
                {isTweening ? 'TWEEN: ON' : 'TWEEN: OFF'}
             </button>
+        </div>
+
+        {/* FPS Control */}
+        <div className="mt-2 pt-2 border-t border-dashed border-gray-200">
+            <div className="text-[8px] font-mono text-gray-400 mb-1.5 text-center">SPEED (FPS)</div>
+            <div className="grid grid-cols-3 gap-1">
+                {[4, 6, 8, 12, 24, 30].map(rate => (
+                    <button
+                        key={rate}
+                        onClick={() => onChangeFps(rate)}
+                        className={`py-1 text-[8px] font-mono font-bold rounded-sm border transition-all ${fps === rate ? 'bg-ink text-white border-ink' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-ink'}`}
+                    >
+                        {rate}
+                    </button>
+                ))}
+            </div>
         </div>
       </div>
 
@@ -80,7 +147,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         ))}
 
         {/* Add Button at end of list */}
-        {frames.length < 12 && (
+        {frames.length < 60 && !isRecording && (
              <button 
                 onClick={onAddFrame}
                 disabled={isPlaying}
@@ -97,7 +164,7 @@ export const Timeline: React.FC<TimelineProps> = ({
          
          <button 
             onClick={onInsertInBetween}
-            disabled={isPlaying || frames.length >= 12}
+            disabled={isPlaying || isRecording || frames.length >= 60}
             className="w-full py-1.5 bg-white border border-gray-200 rounded-sm text-[8px] font-bold font-mono text-ink hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all disabled:opacity-40"
             title="Create a new frame averaged between current and next frame"
          >
@@ -106,7 +173,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
          <button 
             onClick={onDeleteFrame}
-            disabled={isPlaying || frames.length <= 1}
+            disabled={isPlaying || isRecording || frames.length <= 1}
             className="w-full py-1.5 bg-white border border-gray-200 rounded-sm text-[8px] font-bold font-mono text-red-500 hover:bg-red-50 hover:border-red-200 transition-all disabled:opacity-40"
          >
             DELETE FRAME

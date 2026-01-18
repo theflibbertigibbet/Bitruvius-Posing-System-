@@ -12,6 +12,7 @@ export interface Sequence {
 export interface Pose {
   root: { x: number; y: number }; // Global position of the Navel/Pelvis anchor
   rootRotation?: number; // Global rotation around the anchor
+  hips: number; // New: Waist Pivot (Lower body rotation relative to navel)
   torso: number;
   neck: number;
   lShoulder: number;

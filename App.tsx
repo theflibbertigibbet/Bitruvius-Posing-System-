@@ -1,39 +1,112 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Mannequin } from './components/Mannequin';
 import { Controls } from './components/Controls';
 import { Timeline } from './components/Timeline';
 import { SystemGrid } from './components/SystemGrid';
 import { DEFAULT_POSE, HEAD_UNIT, ANATOMY } from './constants';
 import { Pose } from './types';
-import { interpolatePose } from './utils/kinematics';
+import { interpolatePose, getMaxPoseDeviation } from './utils/kinematics';
 import JSZip from 'jszip';
 import FileSaver from 'file-saver';
+
+// History State Interface
+interface HistoryState {
+  frames: Pose[];
+  index: number;
+}
 
 const App = () => {
   // --- ANIMATION STATE ---
   const [frames, setFrames] = useState<Pose[]>([DEFAULT_POSE]);
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [isTweening, setIsTweening] = useState(false);
   const [exportStatus, setExportStatus] = useState<'idle' | 'rendering' | 'zipping'>('idle');
+  const [fps, setFps] = useState(6); 
   
-  const MAX_FRAMES = 12;
+  const MAX_FRAMES = 60;
+  const RECORDING_THRESHOLD = 22.5; 
+
+  // --- HISTORY STATE ---
+  const [past, setPast] = useState<HistoryState[]>([]);
+  const [future, setFuture] = useState<HistoryState[]>([]);
 
   // Visual options
   const [overlayMode, setOverlayMode] = useState<'auto' | 'on' | 'off'>('auto');
-  
-  // --- Activity Monitor (for auto overlay) ---
   const [isActivity, setIsActivity] = useState(false);
   const activityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // --- Interpolation State ---
-  // If playing + tweening, we calculate a dynamic pose. 
-  // Otherwise we render the static frame.
+  // Interpolation
   const [interpolatedPose, setInterpolatedPose] = useState<Pose | null>(null);
-
-  // Derived state: The current pose being rendered
-  // If tweening and playing, use interpolated. Otherwise use strict keyframe.
   const displayPose = (isPlaying && isTweening && interpolatedPose) ? interpolatedPose : frames[currentFrameIndex];
+
+  // --- HISTORY MANAGEMENT ---
+  
+  // Snapshots the CURRENT state into 'past' before making a change
+  const recordHistory = useCallback(() => {
+    setPast(prev => [...prev, { frames, index: currentFrameIndex }]);
+    setFuture([]); // Clear future on new branch
+  }, [frames, currentFrameIndex]);
+
+  const handleUndo = useCallback(() => {
+    if (past.length === 0) return;
+    
+    const newPast = [...past];
+    const previousState = newPast.pop();
+    
+    // Push current state to future
+    setFuture(prev => [{ frames, index: currentFrameIndex }, ...prev]);
+    setPast(newPast);
+    
+    if (previousState) {
+        setFrames(previousState.frames);
+        setCurrentFrameIndex(previousState.index);
+        // Stop playback if undoing
+        setIsPlaying(false);
+    }
+  }, [past, frames, currentFrameIndex]);
+
+  const handleRedo = useCallback(() => {
+    if (future.length === 0) return;
+
+    const newFuture = [...future];
+    const nextState = newFuture.shift(); // Get oldest future
+
+    // Push current state to past
+    setPast(prev => [...prev, { frames, index: currentFrameIndex }]);
+    setFuture(newFuture);
+
+    if (nextState) {
+        setFrames(nextState.frames);
+        setCurrentFrameIndex(nextState.index);
+        setIsPlaying(false);
+    }
+  }, [future, frames, currentFrameIndex]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        // Ignore if focus is in an input (though we used range inputs which usually don't capture keys, mostly fine)
+        if (e.target instanceof HTMLInputElement && e.target.type === 'text') return;
+
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+            e.preventDefault();
+            if (e.shiftKey) {
+                handleRedo();
+            } else {
+                handleUndo();
+            }
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+            e.preventDefault();
+            handleRedo();
+        }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
 
   // --- Animation Loop ---
   useEffect(() => {
@@ -41,9 +114,7 @@ const App = () => {
     let lastTime = performance.now();
     let accumulatedTime = 0;
     
-    // FPS configuration
-    const FPS = 8; // Keyframes per second
-    const FRAME_DURATION = 1000 / FPS; 
+    const FRAME_DURATION = 1000 / fps; 
 
     const loop = (currentTime: number) => {
       const deltaTime = currentTime - lastTime;
@@ -51,32 +122,21 @@ const App = () => {
 
       if (isPlaying) {
         if (isTweening) {
-            // SMOOTH PLAYBACK (Interpolated)
-            // Use accumulated time to progress through "t" (0.0 to 1.0) between frames
             accumulatedTime += deltaTime;
-            
-            // Calculate global progress
             const totalDuration = frames.length * FRAME_DURATION;
             const globalTime = accumulatedTime % totalDuration;
-            
-            // Determine which two frames we are between
             const exactFrame = globalTime / FRAME_DURATION;
             const frameIndex = Math.floor(exactFrame);
             const nextFrameIndex = (frameIndex + 1) % frames.length;
-            const t = exactFrame - frameIndex; // Decimal part is interpolation factor
+            const t = exactFrame - frameIndex;
 
-            // Update UI index to follow along (optional, maybe distracting if fast)
             if (frameIndex !== currentFrameIndex) {
                  setCurrentFrameIndex(frameIndex);
             }
-
-            // Calculate interpolated pose
             const p1 = frames[frameIndex];
             const p2 = frames[nextFrameIndex];
             setInterpolatedPose(interpolatePose(p1, p2, t));
-
         } else {
-            // STEPPED PLAYBACK (Original Stop-Motion style)
             accumulatedTime += deltaTime;
             if (accumulatedTime >= FRAME_DURATION) {
                 setCurrentFrameIndex(prev => (prev + 1) % frames.length);
@@ -84,12 +144,10 @@ const App = () => {
             }
         }
       }
-
       animationFrameId = requestAnimationFrame(loop);
     };
 
     if (isPlaying) {
-        // Reset timers on start
         lastTime = performance.now();
         accumulatedTime = currentFrameIndex * FRAME_DURATION; 
         animationFrameId = requestAnimationFrame(loop);
@@ -98,9 +156,9 @@ const App = () => {
     }
 
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isPlaying, isTweening, frames]); // Re-bind if frames change
+  }, [isPlaying, isTweening, frames, fps]);
 
-  // Activity monitor trigger
+  // Activity monitor
   useEffect(() => {
     setIsActivity(true);
     if (activityTimeoutRef.current) clearTimeout(activityTimeoutRef.current);
@@ -114,24 +172,62 @@ const App = () => {
     return isActivity;
   }, [overlayMode, isActivity]);
 
-  // Update the CURRENT frame's data
-  const handlePoseChange = (key: keyof Pose, value: any) => {
-    // If playing, pause first to edit
+  // --- STATE HANDLERS ---
+
+  const handlePoseChange = (updates: Partial<Pose>) => {
     if (isPlaying) setIsPlaying(false);
+
+    const updatedFrame = {
+        ...frames[currentFrameIndex],
+        ...updates
+    };
+
+    // 2. LIVE RECORDING LOGIC (Auto-Keyframe)
+    if (isRecording && frames.length < MAX_FRAMES) {
+        const prevFrameIndex = Math.max(0, currentFrameIndex - 1);
+        
+        if (currentFrameIndex > 0) {
+            const previousFrame = frames[prevFrameIndex];
+            const deviation = getMaxPoseDeviation(updatedFrame, previousFrame);
+            
+            if (deviation > RECORDING_THRESHOLD) {
+                // IMPORTANT: When auto-generating a frame in live mode, we should snapshot history
+                // so the user can "Undo" the live recording step.
+                recordHistory(); 
+
+                setFrames(prev => {
+                   const newFrames = [...prev];
+                   newFrames[currentFrameIndex] = updatedFrame;
+                   return [...newFrames, updatedFrame];
+                });
+                setCurrentFrameIndex(prev => prev + 1);
+                return; 
+            }
+        } else if (currentFrameIndex === 0 && frames.length === 1) {
+             const deviation = getMaxPoseDeviation(updatedFrame, DEFAULT_POSE);
+             if (deviation > RECORDING_THRESHOLD) {
+                 recordHistory();
+                 setFrames(prev => {
+                     const newFrames = [...prev];
+                     newFrames[0] = updatedFrame;
+                     return [...newFrames, updatedFrame];
+                 });
+                 setCurrentFrameIndex(1);
+                 return;
+             }
+        }
+    }
 
     setFrames(prev => {
         const newFrames = [...prev];
-        newFrames[currentFrameIndex] = {
-            ...newFrames[currentFrameIndex],
-            [key]: value
-        };
+        newFrames[currentFrameIndex] = updatedFrame;
         return newFrames;
     });
   };
   
-  // Replace current frame with loaded pose (for Cartridges)
   const handleLoadPose = (newPose: Pose) => {
     if (isPlaying) setIsPlaying(false);
+    recordHistory(); // Snapshot before load
     setFrames(prev => {
         const newFrames = [...prev];
         newFrames[currentFrameIndex] = newPose;
@@ -139,68 +235,62 @@ const App = () => {
     });
   };
 
-  // --- Sequencer Actions ---
   const handleAddFrame = () => {
       if (frames.length >= MAX_FRAMES) return;
+      recordHistory(); // Snapshot before add
       setFrames(prev => {
-          // Duplicate current frame to the end
           const newFrame = { ...prev[currentFrameIndex] };
           return [...prev, newFrame];
       });
-      // Jump to the new frame
       setCurrentFrameIndex(prev => prev + 1);
   };
 
   const handleInsertInBetween = () => {
       if (frames.length >= MAX_FRAMES) return;
+      recordHistory(); // Snapshot before insert
       
       const nextIndex = (currentFrameIndex + 1) % frames.length;
-      // If at last frame, nextIndex is 0 (loop). We interpolate between last and first.
-      
       const p1 = frames[currentFrameIndex];
       const p2 = frames[nextIndex];
-      const newPose = interpolatePose(p1, p2, 0.5); // 50% blend
+      const newPose = interpolatePose(p1, p2, 0.5);
 
       setFrames(prev => {
           const newFrames = [...prev];
-          // Insert after current index
           newFrames.splice(currentFrameIndex + 1, 0, newPose);
           return newFrames;
       });
-      
-      // Jump to the newly created frame
       setCurrentFrameIndex(prev => prev + 1);
   };
 
   const handleDeleteFrame = () => {
       if (frames.length <= 1) return;
+      recordHistory(); // Snapshot before delete
       setFrames(prev => {
           const newFrames = prev.filter((_, i) => i !== currentFrameIndex);
           return newFrames;
       });
-      // Adjust index if we deleted the last frame
       if (currentFrameIndex >= frames.length - 1) {
           setCurrentFrameIndex(frames.length - 2);
       }
   };
 
-  // --- Export Sequence Logic ---
+  const handleToggleRecord = () => {
+      if (isPlaying) setIsPlaying(false);
+      setIsRecording(!isRecording);
+  };
+
   const handleExportSequence = async () => {
       setExportStatus('rendering');
       setIsPlaying(false); 
-
+      setIsRecording(false);
       const zip = new JSZip();
       const originalIndex = currentFrameIndex;
       const wait = (ms: number) => new Promise(res => setTimeout(res, ms));
 
       try {
-          // Temporarily disable overlay for clean render? optional.
-          // keeping user preference for now.
-
           for (let i = 0; i < frames.length; i++) {
               setCurrentFrameIndex(i);
-              await wait(150); // Wait for React render + DOM update
-
+              await wait(150); 
               const svgElement = document.getElementById('mannequin-root-svg');
               if (!svgElement) continue;
 
@@ -210,16 +300,11 @@ const App = () => {
               const url = URL.createObjectURL(svgBlob);
 
               const canvas = document.createElement('canvas');
-              // High res export
-              const width = 600;
-              const height = 800;
-              const scale = 2;
-              canvas.width = width * scale;
-              canvas.height = height * scale;
+              canvas.width = 1200; canvas.height = 1600;
               const ctx = canvas.getContext('2d');
               
               if (ctx) {
-                  ctx.scale(scale, scale);
+                  ctx.scale(2, 2);
                   await new Promise<void>((resolve) => {
                       const img = new Image();
                       img.onload = () => {
@@ -231,20 +316,15 @@ const App = () => {
                       };
                       img.src = url;
                   });
-
                   const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
-                  if (blob) {
-                      zip.file(`frame_${String(i).padStart(3, '0')}.png`, blob);
-                  }
+                  if (blob) zip.file(`frame_${String(i).padStart(3, '0')}.png`, blob);
               }
               URL.revokeObjectURL(url);
           }
-
           setExportStatus('zipping');
           const content = await zip.generateAsync({type: "blob"});
           const saveAs = (FileSaver as any).saveAs || FileSaver;
           saveAs(content, `bitruvius_sequence_${Date.now()}.zip`);
-          
       } catch (e) {
           console.error("Export failed", e);
       } finally {
@@ -259,11 +339,9 @@ const App = () => {
   return (
     <div className="w-full h-screen bg-paper relative overflow-hidden flex items-center justify-center touch-none">
       
-      {/* 1. SYSTEM ENVIRONMENT */}
       <SystemGrid floorY={floorY} />
 
-      {/* 2. SYSTEM HARDWARE */}
-      <div className="relative z-10">
+      <div className={`relative z-10 ${isRecording ? 'border-4 border-red-500/30 rounded-lg' : ''}`}>
         <svg 
             id="mannequin-root-svg"
             width="600" 
@@ -275,16 +353,15 @@ const App = () => {
         </svg>
       </div>
 
-      {/* 3. SYSTEM UI - Overlay Text */}
       <div className="absolute top-4 left-40 font-mono text-ink opacity-60 pointer-events-none select-none">
         <h1 className="text-xl font-bold tracking-tighter">BITRUVIUS SYSTEM</h1>
         <p className="text-[10px] font-bold text-gray-400 mt-1">
              FRAME: {currentFrameIndex + 1}/{frames.length} 
              {isTweening && isPlaying ? ' [INTERPOLATING]' : ''}
+             {isRecording ? ' [● LIVE RECORDING]' : ''}
         </p>
       </div>
 
-      {/* 4. LEFT SIDEBAR - TIMELINE */}
       <Timeline 
          frames={frames}
          currentFrameIndex={currentFrameIndex}
@@ -294,20 +371,28 @@ const App = () => {
          onDeleteFrame={handleDeleteFrame}
          isPlaying={isPlaying}
          onTogglePlay={() => setIsPlaying(!isPlaying)}
+         isRecording={isRecording}
+         onToggleRecord={handleToggleRecord}
          isTweening={isTweening}
          onToggleTween={() => setIsTweening(!isTweening)}
          onExport={handleExportSequence}
          exportStatus={exportStatus}
+         fps={fps}
+         onChangeFps={setFps}
+         onUndo={handleUndo}
+         onRedo={handleRedo}
+         canUndo={past.length > 0}
+         canRedo={future.length > 0}
       />
 
-      {/* 5. RIGHT SIDEBAR - CONTROLS */}
       <Controls 
-        pose={frames[currentFrameIndex]} // Controls always edit keyframe data
+        pose={frames[currentFrameIndex]} 
         overlayMode={overlayMode} 
         setOverlayMode={setOverlayMode} 
         onChange={handlePoseChange} 
         onLoad={handleLoadPose}
         frames={frames}
+        onInteractionStart={recordHistory} // Capture history before drag begins
       />
 
     </div>
